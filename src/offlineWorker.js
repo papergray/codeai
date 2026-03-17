@@ -1,134 +1,98 @@
-// offlineWorker.js — runs in a Web Worker so inference never blocks the UI
-// Uses @huggingface/transformers (WASM backend, works in Android WebView)
-
+// offlineWorker.js — Web Worker for on-device AI inference
+// Uses @huggingface/transformers WASM backend (works in Android WebView)
 import { pipeline, env } from "@huggingface/transformers";
 
-// Store models in Cache API so they survive app restarts
+// Use browser Cache API to persist models across sessions
 env.useBrowserCache = true;
 env.allowLocalModels = false;
+// Use WASM backend — guaranteed to work in Android WebView (no WebGPU needed)
+env.backends.onnx.wasm.numThreads = 1;
 
-// Available offline models (downloaded from HuggingFace on first use, cached forever)
-const MODELS = {
-  "tiny-starcoder": {
-    id: "HuggingFaceTB/SmolLM2-135M-Instruct",   // ~270 MB — fast, general coding
-    task: "text-generation",
-    label: "SmolLM2 135M",
-    size: "~270 MB",
-  },
-  "phi-1_5": {
-    id: "Xenova/phi-1_5",                          // ~1.3 GB — great code quality
-    task: "text-generation",
-    label: "Phi-1.5 (1.3B)",
-    size: "~1.3 GB",
-  },
-  "codegen-350m": {
-    id: "Xenova/codegen-350M-mono",                // ~700 MB — code specialist
-    task: "text-generation",
-    label: "CodeGen 350M",
-    size: "~700 MB",
-  },
-};
+let pipe = null;
+let loadedModelId = null;
 
-let currentPipeline = null;
-let currentModelKey = null;
+self.onmessage = async ({ data }) => {
+  const { type, id, modelId, prompt, maxTokens } = data;
 
-// ── Message handler ─────────────────────────────────────────────────────────
-self.onmessage = async (e) => {
-  const { type, payload } = e.data;
-
-  switch (type) {
-    case "load":
-      await loadModel(payload.modelKey);
-      break;
-    case "generate":
-      await generate(payload.prompt, payload.maxTokens);
-      break;
-    case "status":
-      self.postMessage({ type: "status", ready: !!currentPipeline, model: currentModelKey });
-      break;
+  if (type === "load") {
+    await doLoad(id, modelId);
+  } else if (type === "generate") {
+    await doGenerate(id, prompt, maxTokens || 300);
+  } else if (type === "status") {
+    self.postMessage({ type: "status", id, loaded: !!pipe, modelId: loadedModelId });
   }
 };
 
-async function loadModel(modelKey) {
-  const modelInfo = MODELS[modelKey];
-  if (!modelInfo) {
-    self.postMessage({ type: "error", message: `Unknown model: ${modelKey}` });
+async function doLoad(id, modelId) {
+  // Already loaded the same model
+  if (pipe && loadedModelId === modelId) {
+    self.postMessage({ type: "loaded", id, modelId });
     return;
   }
 
-  // Already loaded
-  if (currentModelKey === modelKey && currentPipeline) {
-    self.postMessage({ type: "loaded", modelKey });
-    return;
-  }
+  // Reset if switching models
+  pipe = null;
+  loadedModelId = null;
 
   try {
-    self.postMessage({ type: "loading", progress: 0, message: `Loading ${modelInfo.label}…` });
+    self.postMessage({ type: "progress", id, pct: 0, msg: "Starting download…" });
 
-    currentPipeline = await pipeline(modelInfo.task, modelInfo.id, {
-      dtype: "q4",           // 4-bit quantized — smallest/fastest for mobile
-      device: "wasm",        // WASM backend — guaranteed to work in WebView
-      progress_callback: (p) => {
-        if (p.status === "downloading") {
-          const pct = p.total ? Math.round((p.loaded / p.total) * 100) : 0;
-          self.postMessage({
-            type: "loading",
-            progress: pct,
-            message: `Downloading ${p.file?.split("/").pop() || "model"} ${pct}%`,
-          });
-        } else if (p.status === "loading") {
-          self.postMessage({ type: "loading", progress: 95, message: "Initializing WASM…" });
+    pipe = await pipeline("text-generation", modelId, {
+      dtype: "q4",
+      device: "wasm",
+      progress_callback: ({ status, file, loaded, total }) => {
+        if (status === "downloading" && total) {
+          const pct = Math.round((loaded / total) * 100);
+          const fname = (file || "").split("/").pop();
+          self.postMessage({ type: "progress", id, pct, msg: `${fname} ${pct}%` });
+        } else if (status === "loading" || status === "initiate") {
+          self.postMessage({ type: "progress", id, pct: 95, msg: "Loading into memory…" });
+        } else if (status === "ready") {
+          self.postMessage({ type: "progress", id, pct: 99, msg: "Almost ready…" });
         }
       },
     });
 
-    currentModelKey = modelKey;
-    self.postMessage({ type: "loaded", modelKey });
-
+    loadedModelId = modelId;
+    self.postMessage({ type: "loaded", id, modelId });
   } catch (err) {
-    currentPipeline = null;
-    currentModelKey = null;
-    self.postMessage({ type: "error", message: err.message });
+    pipe = null;
+    loadedModelId = null;
+    self.postMessage({ type: "error", id, msg: err.message });
   }
 }
 
-async function generate(prompt, maxNewTokens = 400) {
-  if (!currentPipeline) {
-    self.postMessage({ type: "error", message: "No model loaded. Load a model first." });
+async function doGenerate(id, prompt, maxNewTokens) {
+  if (!pipe) {
+    self.postMessage({ type: "error", id, msg: "No model loaded." });
     return;
   }
-
   try {
-    self.postMessage({ type: "generating" });
+    self.postMessage({ type: "genStart", id });
 
-    const result = await currentPipeline(prompt, {
+    // Stream tokens
+    let prevLen = prompt.length;
+    const out = await pipe(prompt, {
       max_new_tokens: maxNewTokens,
       temperature: 0.7,
       do_sample: true,
       repetition_penalty: 1.1,
-      // Stream tokens back as they generate
-      callback_function: (tokens) => {
-        // Decode partial output
-        const partial = tokens[0]?.generated_text || "";
-        // Only send the new part (after the prompt)
-        const newText = partial.slice(prompt.length);
-        if (newText) {
-          self.postMessage({ type: "token", text: newText });
+      streamer: undefined, // handled via callback below
+      callback_function: (beams) => {
+        const text = beams[0]?.output_token_ids
+          ? null // token id mode — skip
+          : beams[0]?.generated_text || "";
+        if (text && text.length > prevLen) {
+          self.postMessage({ type: "token", id, chunk: text.slice(prevLen) });
+          prevLen = text.length;
         }
       },
     });
 
-    const fullText = Array.isArray(result)
-      ? result[0]?.generated_text || ""
-      : result?.generated_text || "";
-
-    // Send the complete response (trimmed after the prompt)
-    const response = fullText.slice(prompt.length).trim();
-    self.postMessage({ type: "done", text: response });
-
+    const full = Array.isArray(out) ? out[0]?.generated_text : out?.generated_text;
+    const response = (full || "").slice(prompt.length).trim();
+    self.postMessage({ type: "done", id, text: response });
   } catch (err) {
-    self.postMessage({ type: "error", message: err.message });
+    self.postMessage({ type: "error", id, msg: err.message });
   }
 }
-
-export { MODELS };
