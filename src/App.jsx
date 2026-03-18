@@ -456,15 +456,17 @@ export default function App() {
           <div style={{ flex: 1, overflow: "hidden" }}>
             {leftTab === "files" ? (
               <FileManager
-                files={fileList}
+                repoFiles={fileList}
+                localPaths={openFiles.map(f => f.path)}
+                openFilesMap={new Map(openFiles.map(f => [f.path, f]))}
                 activePath={activeFile?.path}
-                modifiedPaths={modifiedPaths}
                 onOpen={openFile}
                 onUploadFile={uploadFile}
                 onCreateFile={createFile}
                 onCreateFolder={createFolder}
                 onDeleteFile={deleteFile}
                 onRenameFile={renameFile}
+                onRefreshRepo={() => currentRepo && loadTree(currentRepo.owner, currentRepo.name, currentRepo.branch)}
                 loading={loading.files}
               />
             ) : (

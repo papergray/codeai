@@ -1,6 +1,7 @@
 # ⟨/⟩ CodeAI IDE
 
-A full mobile code editor with GitHub integration and AI assistance.
+A full mobile code editor with GitHub integration and AI assistance — built as an Android APK via GitHub Actions.
+
 ```
 ┌─────────────────────────────────────────────────────────┐
 │ ⟨/⟩  owner/my-repo  🌿 main   ● 2 modified        ⚙   │
