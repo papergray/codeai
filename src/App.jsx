@@ -3,7 +3,156 @@ import Editor from "./components/Editor.jsx";
 import FileManager from "./components/FileManager.jsx";
 import GitPanel from "./components/GitPanel.jsx";
 import AIPanel from "./components/AIPanel.jsx";
+import RunPanel, { canRun } from "./components/RunPanel.jsx";
 import { github, detectLang, fileIcon } from "./github.js";
+
+// ── Vertical resizable divider (for editor/run split) ─────────────────────────
+function HDivider({ onDrag }) {
+  const dragging = useRef(false);
+  const start    = useRef(0);
+  const onPointerDown = (e) => { e.preventDefault(); dragging.current = true; start.current = e.clientY; e.currentTarget.setPointerCapture(e.pointerId); };
+  const onPointerMove = (e) => { if (!dragging.current) return; const dy = e.clientY - start.current; start.current = e.clientY; onDrag(dy); };
+  const onPointerUp   = () => { dragging.current = false; };
+  return (
+    <div onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
+      style={{ height: 4, flexShrink: 0, cursor: "row-resize", background: "#1a1a2e", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 5 }}
+      onMouseEnter={e => e.currentTarget.style.background = "#7c3aed"}
+      onMouseLeave={e => e.currentTarget.style.background = "#1a1a2e"}
+    >
+      <div style={{ width: 40, height: 2, borderRadius: 2, background: "inherit", opacity: 0.6 }} />
+    </div>
+  );
+}
+
+// ── Middle panel: editor + optional run panel below ───────────────────────────
+function MiddlePanel({ openFiles, activeIdx, activeFile, activeLang, loading, setActiveIdx, closeTab, updateContent, setCursor, setLeftTab, currentRepo }) {
+  const [showRun,  setShowRun]  = useState(false);
+  const [runH,     setRunH]     = useState(280);
+  const [copied,   setCopied]   = useState(false);
+
+  const dragRunH = useCallback((dy) => setRunH(h => Math.max(80, Math.min(600, h - dy))), []);
+
+  const copyFile = () => {
+    if (!activeFile) return;
+    navigator.clipboard.writeText(activeFile.content).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
+
+      {/* ── TOOLBAR: file tabs + copy + run ── */}
+      <div style={{ background: "#060608", borderBottom: "1px solid #1a1a2e", flexShrink: 0 }}>
+
+        {/* Top row: label + copy + run buttons */}
+        <div style={{ display: "flex", alignItems: "center", height: 32, paddingLeft: 10, paddingRight: 8, borderBottom: "1px solid #0d0d18", gap: 6 }}>
+          <span style={{ fontSize: 9, color: "#3a3a5c", letterSpacing: "0.1em", fontWeight: 700, flex: 1 }}>EDITOR</span>
+
+          {loading.git && <span style={{ fontSize: 9, color: "#7c3aed" }}>⟳</span>}
+
+          {/* Copy whole file */}
+          {activeFile && (
+            <button onClick={copyFile} title="Copy file contents" style={{
+              background: copied ? "#0d2010" : "#111120",
+              border: `1px solid ${copied ? "#22c55e" : "#2a2a3a"}`,
+              borderRadius: 5, padding: "3px 9px", cursor: "pointer",
+              color: copied ? "#22c55e" : "#6060a0",
+              fontSize: 10, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4,
+            }}>
+              {copied ? "✓ Copied" : "⎘ Copy"}
+            </button>
+          )}
+
+          {/* Run button */}
+          {activeFile && (
+            <button
+              onClick={() => setShowRun(s => !s)}
+              title={canRun(activeLang) ? "Run file" : "Preview file"}
+              style={{
+                background: showRun ? "linear-gradient(135deg,#7c3aed,#3b82f6)" : "#111120",
+                border: `1px solid ${showRun ? "#7c3aed" : canRun(activeLang) ? "#2a4a2a" : "#2a2a3a"}`,
+                borderRadius: 5, padding: "3px 10px", cursor: "pointer",
+                color: showRun ? "#fff" : canRun(activeLang) ? "#4ade80" : "#6060a0",
+                fontSize: 10, fontFamily: "inherit", fontWeight: 700,
+                boxShadow: showRun ? "0 0 8px #7c3aed44" : "none",
+              }}
+            >
+              {showRun ? "■ Close" : canRun(activeLang) ? "▶ Run" : "👁 Preview"}
+            </button>
+          )}
+        </div>
+
+        {/* File tabs row */}
+        {openFiles.length > 0 && (
+          <div style={{ display: "flex", overflowX: "auto", height: 32, scrollbarWidth: "none" }}>
+            {openFiles.map((f, i) => {
+              const name = f.path.split("/").pop();
+              const isModified = f.content !== f.originalContent || f.isNew;
+              return (
+                <div key={f.path} onClick={() => setActiveIdx(i)} style={{
+                  height: "100%", display: "flex", alignItems: "center", gap: 5,
+                  padding: "0 10px", flexShrink: 0, cursor: "pointer",
+                  background: i === activeIdx ? "#0d0d14" : "transparent",
+                  borderBottom: i === activeIdx ? "2px solid #7c3aed" : "2px solid transparent",
+                  borderRight: "1px solid #1a1a2e",
+                  color: i === activeIdx ? "#e0e0ff" : "#4a4a7a",
+                  fontSize: 11, userSelect: "none",
+                }}>
+                  <span style={{ fontSize: 12 }}>{fileIcon(f.path)}</span>
+                  <span style={{ whiteSpace: "nowrap", maxWidth: 100, overflow: "hidden", textOverflow: "ellipsis" }}>{name}</span>
+                  {isModified && <span style={{ color: "#f59e0b", fontSize: 12 }}>●</span>}
+                  <span onClick={e => { e.stopPropagation(); closeTab(i); }} style={{ fontSize: 14, color: "#3a3a5c", lineHeight: 1 }}>×</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* ── EDITOR (fills remaining space above run panel) ── */}
+      <div style={{ flex: 1, overflow: "hidden", minHeight: 0 }}>
+        {openFiles.length === 0 ? (
+          <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, padding: 24 }}>
+            <div style={{ fontSize: 48, opacity: 0.08 }}>⟨/⟩</div>
+            <div style={{ fontSize: 12, color: "#2a2a4a", textAlign: "center", lineHeight: 2 }}>
+              {currentRepo ? "Open a file from Files panel" : "Connect GitHub to start"}
+            </div>
+            {!currentRepo && (
+              <button onClick={() => setLeftTab("git")} style={{ background: "#111120", border: "1px solid #2a2a4a", borderRadius: 8, padding: "9px 16px", color: "#8080c0", cursor: "pointer", fontSize: 11, fontFamily: "inherit" }}>
+                🐙 Connect GitHub
+              </button>
+            )}
+          </div>
+        ) : (
+          <Editor
+            key={activeFile?.path}
+            content={activeFile?.content || ""}
+            language={activeLang}
+            onChange={updateContent}
+            onCursorChange={setCursor}
+          />
+        )}
+      </div>
+
+      {/* ── RUN PANEL (slides up from bottom) ── */}
+      {showRun && activeFile && (
+        <>
+          <HDivider onDrag={dragRunH} />
+          <div style={{ height: runH, flexShrink: 0, overflow: "hidden", borderTop: "1px solid #1a1a2e" }}>
+            <RunPanel
+              content={activeFile.content}
+              language={activeLang}
+              filePath={activeFile.path}
+              onClose={() => setShowRun(false)}
+            />
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const LS = {
@@ -486,66 +635,20 @@ export default function App() {
         {/* ── LEFT DIVIDER ── */}
         <Divider onDrag={dragLeft} />
 
-        {/* ── MIDDLE PANEL: Code Editor ── */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
-          {/* Tab bar header */}
-          <div style={{ background: "#060608", borderBottom: "1px solid #1a1a2e", flexShrink: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", height: 32, paddingLeft: 8, borderBottom: "1px solid #1a1a2e" }}>
-              <span style={{ fontSize: 9, color: "#3a3a5c", letterSpacing: "0.1em", fontWeight: 700 }}>EDITOR</span>
-              {loading.git && <span style={{ marginLeft: "auto", marginRight: 8, fontSize: 9, color: "#7c3aed" }}>⟳ syncing…</span>}
-            </div>
-            {/* File tabs */}
-            {openFiles.length > 0 && (
-              <div style={{ display: "flex", overflowX: "auto", height: 32, scrollbarWidth: "none" }}>
-                {openFiles.map((f, i) => {
-                  const name = f.path.split("/").pop();
-                  const isModified = f.content !== f.originalContent || f.isNew;
-                  return (
-                    <div key={f.path} onClick={() => setActiveIdx(i)} style={{
-                      height: "100%", display: "flex", alignItems: "center", gap: 5,
-                      padding: "0 10px", flexShrink: 0, cursor: "pointer",
-                      background: i === activeIdx ? "#0d0d14" : "transparent",
-                      borderBottom: i === activeIdx ? "2px solid #7c3aed" : "2px solid transparent",
-                      borderRight: "1px solid #1a1a2e",
-                      color: i === activeIdx ? "#e0e0ff" : "#4a4a7a",
-                      fontSize: 11, userSelect: "none",
-                    }}>
-                      <span style={{ fontSize: 12 }}>{fileIcon(f.path)}</span>
-                      <span style={{ whiteSpace: "nowrap", maxWidth: 100, overflow: "hidden", textOverflow: "ellipsis" }}>{name}</span>
-                      {isModified && <span style={{ color: "#f59e0b", fontSize: 12 }}>●</span>}
-                      <span onClick={e => { e.stopPropagation(); closeTab(i); }} style={{ fontSize: 14, color: "#3a3a5c", lineHeight: 1 }}>×</span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* Editor */}
-          <div style={{ flex: 1, overflow: "hidden" }}>
-            {openFiles.length === 0 ? (
-              <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, padding: 24 }}>
-                <div style={{ fontSize: 48, opacity: 0.08 }}>⟨/⟩</div>
-                <div style={{ fontSize: 12, color: "#2a2a4a", textAlign: "center", lineHeight: 2 }}>
-                  {currentRepo ? "Open a file from Files panel" : "Connect GitHub to start\nor drag a file from Files panel"}
-                </div>
-                {!currentRepo && (
-                  <button onClick={() => setLeftTab("git")} style={{ background: "#111120", border: "1px solid #2a2a4a", borderRadius: 8, padding: "9px 16px", color: "#8080c0", cursor: "pointer", fontSize: 11, fontFamily: "inherit" }}>
-                    🐙 Connect GitHub
-                  </button>
-                )}
-              </div>
-            ) : (
-              <Editor
-                key={activeFile?.path}
-                content={activeFile?.content || ""}
-                language={activeLang}
-                onChange={updateContent}
-                onCursorChange={setCursor}
-              />
-            )}
-          </div>
-        </div>
+        {/* ── MIDDLE PANEL: Code Editor + Run ── */}
+        <MiddlePanel
+          openFiles={openFiles}
+          activeIdx={activeIdx}
+          activeFile={activeFile}
+          activeLang={activeLang}
+          loading={loading}
+          setActiveIdx={setActiveIdx}
+          closeTab={closeTab}
+          updateContent={updateContent}
+          setCursor={setCursor}
+          setLeftTab={setLeftTab}
+          currentRepo={currentRepo}
+        />
 
         {/* ── RIGHT DIVIDER ── */}
         <Divider onDrag={dragRight} />

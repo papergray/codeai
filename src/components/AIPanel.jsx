@@ -220,20 +220,67 @@ export default function AIPanel({ apiKey, currentLang, onInsertCode }) {
             </div>
           );
           return (
-            <div key={i} style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+            <div key={i} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {fmtResponse(msg.content).map((p, j) => p.type === "code" ? (
-                <div key={j} style={{ background: "#050508", border: "1px solid #1e1e3a", borderRadius: 7, overflow: "hidden" }}>
-                  <div style={{ background: "#0a0a12", borderBottom: "1px solid #1a1a2e", padding: "4px 10px", display: "flex", justifyContent: "space-between" }}>
-                    <span style={{ fontSize: 9, color: "#3a3a5c" }}>{currentLang?.toUpperCase()}</span>
-                    <div style={{ display: "flex", gap: 4 }}>
-                      {onInsertCode && <button onClick={() => onInsertCode(p.content)} style={{ background: "#1a2a1a", border: "1px solid #2a4a2a", borderRadius: 3, padding: "2px 7px", cursor: "pointer", color: "#22c55e", fontSize: 9, fontFamily: "inherit" }}>Insert</button>}
-                      <button onClick={() => copy(p.content, `${i}-${j}`)} style={{ background: copied === `${i}-${j}` ? "#22c55e22" : "#1a1a2e", border: `1px solid ${copied === `${i}-${j}` ? "#22c55e" : "#2a2a4a"}`, borderRadius: 3, padding: "2px 7px", cursor: "pointer", color: copied === `${i}-${j}` ? "#22c55e" : "#666", fontSize: 9, fontFamily: "inherit" }}>{copied === `${i}-${j}` ? "✓" : "Copy"}</button>
+                /* ── Code block — styled box with header bar ── */
+                <div key={j} style={{
+                  borderRadius: 9, overflow: "hidden",
+                  border: "1px solid #2a1f4e",
+                  boxShadow: "0 2px 12px #00000066",
+                }}>
+                  {/* Header bar */}
+                  <div style={{
+                    background: "linear-gradient(90deg,#0f0a1e,#141028)",
+                    borderBottom: "1px solid #2a1f4e",
+                    padding: "6px 12px",
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    gap: 8,
+                  }}>
+                    {/* Traffic-light dots + language label */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#ff5f57", display: "inline-block" }} />
+                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#febc2e", display: "inline-block" }} />
+                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#28c840", display: "inline-block" }} />
+                      <span style={{ fontSize: 9, color: "#7c3aed", letterSpacing: "0.12em", fontWeight: 700, marginLeft: 4 }}>
+                        {currentLang?.toUpperCase()}
+                      </span>
+                    </div>
+                    {/* Action buttons */}
+                    <div style={{ display: "flex", gap: 5 }}>
+                      {onInsertCode && (
+                        <button onClick={() => onInsertCode(p.content)} style={{
+                          background: "#1a2a1a", border: "1px solid #2a4a2a", borderRadius: 4,
+                          padding: "3px 8px", cursor: "pointer", color: "#4ade80",
+                          fontSize: 9, fontFamily: "inherit", fontWeight: 700,
+                        }}>↗ Insert</button>
+                      )}
+                      <button onClick={() => copy(p.content, `${i}-${j}`)} style={{
+                        background: copied === `${i}-${j}` ? "#0d2010" : "#1a1a2e",
+                        border: `1px solid ${copied === `${i}-${j}` ? "#22c55e" : "#3a3a5a"}`,
+                        borderRadius: 4, padding: "3px 8px", cursor: "pointer",
+                        color: copied === `${i}-${j}` ? "#22c55e" : "#9090b0",
+                        fontSize: 9, fontFamily: "inherit", fontWeight: 700,
+                        transition: "all .15s",
+                      }}>{copied === `${i}-${j}` ? "✓ Copied" : "⎘ Copy"}</button>
                     </div>
                   </div>
-                  <pre style={{ margin: 0, padding: "9px 12px", overflowX: "auto", fontSize: 11, lineHeight: 1.7, color: "#a5f3fc", fontFamily: "inherit", whiteSpace: "pre" }}>{p.content}</pre>
+                  {/* Code body */}
+                  <div style={{ background: "#07070f", overflowX: "auto" }}>
+                    <pre style={{
+                      margin: 0, padding: "12px 14px",
+                      fontSize: 11, lineHeight: 1.75, color: "#a5f3fc",
+                      fontFamily: "'JetBrains Mono','Fira Code',monospace",
+                      whiteSpace: "pre", minWidth: "100%",
+                    }}>{p.content}</pre>
+                  </div>
                 </div>
               ) : (
-                <div key={j} style={{ background: "#0e0e1a", border: "1px solid #1a1a2e", borderRadius: 7, padding: "7px 10px", fontSize: 11, lineHeight: 1.7, color: "#c0c0e0", whiteSpace: "pre-wrap" }}>{p.content.trim()}</div>
+                <div key={j} style={{
+                  background: "#0e0e1a", border: "1px solid #1a1a2e",
+                  borderRadius: 7, padding: "8px 11px",
+                  fontSize: 11, lineHeight: 1.75, color: "#c0c0e0",
+                  whiteSpace: "pre-wrap",
+                }}>{p.content.trim()}</div>
               ))}
             </div>
           );
